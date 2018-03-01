@@ -12,7 +12,7 @@ data = []
 labels = []
 
 for file in files:
-	d = unpickle(file)
+	d = unpickle('./cifar-10-batches-py/' + file)
 	data.append(d[b'data'])
 	labels.append(np.array([d[b'labels']]).T)
 
