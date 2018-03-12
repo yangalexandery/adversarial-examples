@@ -147,14 +147,14 @@ if __name__ == '__main__':
     # set up model and convert into cuda
     model = NAME_TO_MODEL[args.name].cuda()
     print('==> model loaded')
-    best_top_5 = 0
+    best_top_1 = 0
 
     # set up optimizer for training
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-5)
-    # optimizer = torch.optim.SGD(model.parameters(), args.lr,
-    #                             momentum = args.momentum,
-    #                             nesterov = True,
-    #                             weight_decay = args.weight_decay)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-5)
+    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                momentum = args.momentum,
+                                nesterov = True,
+                                weight_decay = args.weight_decay)
     print('==> optimizer loaded')
 
     # set up experiment path
@@ -185,7 +185,7 @@ if __name__ == '__main__':
         model.train()
         sigma = args.noise / ((1 + epoch) ** noise_decay)
 
-        for images, labels in tqdm(loaders['train'], desc = 'epoch %d' % (epoch + 1)):
+        for images, labels in tqdm(loaders['val'], desc = 'epoch %d' % (epoch + 1)):
             # convert images and labels into cuda tensor
             # images = Variable(images).float()
             # labels = Variable(labels)
@@ -242,8 +242,8 @@ if __name__ == '__main__':
                 top1.update(prec1[0], images.size(0))
                 top5.update(prec5[0], images.size(0))
 
-            if top5.avg > best_top_5:
-                best_top_5 = top5.avg
+            if top1.avg > best_top_1:
+                best_top_1 = top5.avg
 
                 # snapshot model and optimizer
                 snapshot = {

@@ -7,6 +7,7 @@ from multiprocessing import Pool
 import utils
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 # from hparams import hp
 # from resnet import resnet50
 from torch.autograd import Variable
@@ -15,6 +16,8 @@ from torch.nn import CrossEntropyLoss
 from torch.nn.utils import clip_grad_norm
 import torchvision.models as models
 from tqdm import tqdm
+import transforms
+from PIL import Image
 # from ayang_net import AyangNet
 
 from data import CIFAR
@@ -126,6 +129,14 @@ if __name__ == '__main__':
     for key in vars(args):
         print('[{0}] = {1}'.format(key, getattr(args, key)))
 
+    args.gpu = '0'
+    args.name = 'inceptionv3'
+    args.adv_name = 'simplenet'
+
+    # args.resume = './exp/inception-trial-3/best.pth'
+    args.resume = './exp/adversary-simple-model-trial-3/best.pth'
+
+
     # set up gpus for training
     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
@@ -137,7 +148,7 @@ if __name__ == '__main__':
             data[split] = CIFAR(data_path = os.path.join(args.data_path, args.synset), split = split)
         else:
             data[split] = CIFAR(data_path = os.path.join(args.data_path, args.synset), split = split, augment= False)
-        loaders[split] = DataLoader(data[split], batch_size = args.batch, shuffle = True, num_workers = args.workers)
+        loaders[split] = DataLoader(data[split], batch_size = args.batch, shuffle = False, num_workers = args.workers)
     print('==> dataset loaded')
     print('[size] = {0} + {1}'.format(len(data['train']), len(data['val'])))
 
@@ -145,17 +156,18 @@ if __name__ == '__main__':
     # categories = np.genfromtxt(args.categories, dtype='str')[:, 0]
 
     # set up model and convert into cuda
-    model = NAME_TO_MODEL[args.name].cuda()
+    # model = NAME_TO_MODEL[args.name].cuda()
+    model = NAME_TO_MODEL[args.adv_name].cuda()
     print('==> model loaded')
-    best_top_5 = 0
+    best_top_1 = 0
 
     # set up optimizer for training
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-5)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-5)
     # optimizer = torch.optim.SGD(model.parameters(), args.lr,
     #                             momentum = args.momentum,
     #                             nesterov = True,
     #                             weight_decay = args.weight_decay)
-    print('==> optimizer loaded')
+    # print('==> optimizer loaded')
 
     # set up experiment path
     exp_path = os.path.join('exp', args.exp)
@@ -170,90 +182,115 @@ if __name__ == '__main__':
             epoch = snapshot['epoch']
             model.load_state_dict(snapshot['model'])
             # If this doesn't work, can use optimizer.load_state_dict
-            optimizer.load_state_dict(snapshot['optimizer'])
+            # optimizer.load_state_dict(snapshot['optimizer'])
+
+            # snapshot_adv = torch.load(args.resume_adv)
+            # model_adv.load_state_dict(snapshot_adv['model'])
             print('==> snapshot "{0}" loaded (epoch {1})'.format(args.resume, epoch))
         else:
             raise FileNotFoundError('no snapshot found at "{0}"'.format(args.resume))
     else:
         epoch = 0
 
-    for epoch in range(epoch, args.epochs):
-        step = epoch * len(data['train'])
-        adjust_learning_rate(optimizer, epoch)
+    # for epoch in range(epoch, args.epochs):
+    #     step = epoch * len(data['train'])
+    #     adjust_learning_rate(optimizer, epoch)
 
         # training the model
-        model.train()
-        sigma = args.noise / ((1 + epoch) ** noise_decay)
+        # model.train()
+        # sigma = args.noise / ((1 + epoch) ** noise_decay)
 
-        for images, labels in tqdm(loaders['train'], desc = 'epoch %d' % (epoch + 1)):
-            # convert images and labels into cuda tensor
-            # images = Variable(images).float()
-            # labels = Variable(labels)
-            images = Variable(images.cuda()).float()
-            labels = Variable(labels.cuda())
-            # initialize optimizer
-            optimizer.zero_grad()
+        # for images, labels in tqdm(loaders['val'], desc = 'epoch %d' % (epoch + 1)):
+        #     # convert images and labels into cuda tensor
+        #     # images = Variable(images).float()
+        #     # labels = Variable(labels)
+        #     images = Variable(images.cuda()).float()
+        #     labels = Variable(labels.cuda())
+        #     # initialize optimizer
+        #     optimizer.zero_grad()
 
-            # forward pass
-            outputs = model.forward(images)
-            loss = loss_fn(outputs, labels.squeeze())
-            # add summary to logger
-            logger.scalar_summary('loss', loss.data[0], step)
-            step += args.batch
+        #     # forward pass
+        #     outputs = model.forward(images)
+        #     # add summary to logger
+        #     logger.scalar_summary('loss', loss.data[0], step)
+        #     step += args.batch
 
-            # Add noise to gradients
-            for w in model.parameters():
-                if w.grad is not None:
-                    w.grad.data.normal_(mean = 0, std = sigma)
+        #     # Add noise to gradients
+        #     for w in model.parameters():
+        #         if w.grad is not None:
+        #             w.grad.data.normal_(mean = 0, std = sigma)
 
-            # backward pass
-            loss.backward()
+        #     # backward pass
+        #     loss.backward()
 
-            # Clip gradient norms
-            clip_grad_norm(model.parameters(), 10.0)
+        #     # Clip gradient norms
+        #     clip_grad_norm(model.parameters(), 10.0)
 
-            optimizer.step()
+        #     optimizer.step()
 
 
-        if args.snapshot != 0 and (epoch + 1) % args.snapshot == 0:
-            # testing the model
-            model.eval()
-            top1 = AverageMeter()
-            top5 = AverageMeter()
-            # for split in ['train', 'val']:
-            #     # sample one batch from dataset
-            #     images, labels = iter(loaders[split]).next()
-            #     images = Variable(images.cuda()).float()
+    # testing the model
+    model.eval()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
+    # for split in ['train', 'val']:
+    #     # sample one batch from dataset
+    #     images, labels = iter(loaders[split]).next()
+    #     images = Variable(images.cuda()).float()
 
-            #     # forward pass
-            #     outputs = model.forward(images).cpu().data
-            #     images = images.cpu().data
+    #     # forward pass
+    #     outputs = model.forward(images).cpu().data
+    #     images = images.cpu().data
 
-            #     # add summary to logger
-            #     for image, output in zip(images, outputs):
-            #         category = categories[output.numpy().flatten().argmax()]
-            #         category = category.replace('/', '_')
-            #         logger.image_summary('{}-outputs, category: {} '.format(split, category), [reconstruct_image(image)], step)
+    #     # add summary to logger
+    #     for image, output in zip(images, outputs):
+    #         category = categories[output.numpy().flatten().argmax()]
+    #         category = category.replace('/', '_')
+    #         logger.image_summary('{}-outputs, category: {} '.format(split, category), [reconstruct_image(image)], step)
 
-            for images, labels in tqdm(loaders['val'], desc = 'epoch %d' % (epoch + 1)):
-                outputs = model.forward(Variable(images.cuda())).cpu()
 
-                prec1, prec5 = accuracy(outputs.data, labels, topk=(1, 5))
-                top1.update(prec1[0], images.size(0))
-                top5.update(prec5[0], images.size(0))
+    # normalize = transforms.Normalize(
+    #     mean=[0.485, 0.456, 0.406],
+    #     std=[0.229, 0.224, 0.225])
 
-            if top5.avg > best_top_5:
-                best_top_5 = top5.avg
+    # transform = [
+    #     transforms.Scale(256),
+    #     transforms.RandomCrop(224),
+    #     ]
+    # transform += [transforms.ToTensor()]
+    # # transform += [normalize]
+    # # transform_adv = [transforms.ToTensor(), normalize]
+    # # preprocess_adv = transforms.Compose(transform)
+    # preprocess = transforms.Compose(transform)
+    adv_examples = []
 
-                # snapshot model and optimizer
-                snapshot = {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict()
-                }
-                torch.save(snapshot, os.path.join(exp_path, 'best.pth'))
-                print('==> saved snapshot to "{0}"'.format(os.path.join(exp_path, 'best.pth')))
+    for images, labels in tqdm(loaders['val'], desc = 'epoch %d' % (epoch + 1)):
+        # output_adv = model_adv.forward(Variable(images.cuda())).cpu()
 
-            print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} in validation'.format(top1=top1, top5=top5))
-            logger.scalar_summary('Top 1', top1.avg, epoch)
-            logger.scalar_summary('Top 5', top5.avg, epoch)
+        # tmp = images.numpy()
+        # print(tmp.shape)
+        # images_model = Image.fromarray(images.numpy())
+        adv_input = Variable(images.cuda(), requires_grad=True)
+        adv_labels = Variable(labels)
+
+        outputs = model.forward(adv_input).cpu()
+        loss = loss_fn(outputs, adv_labels.squeeze())
+
+        loss.backward()
+        input_grad = adv_input.grad.data.cpu().numpy()
+        input_grad += np.sign(input_grad)
+        adv_examples.append(input_grad)
+
+        prec1, prec5 = accuracy(outputs.data, labels, topk=(1, 5))
+        top1.update(prec1[0], images.size(0))
+        top5.update(prec5[0], images.size(0))
+
+    adv_examples = np.vstack(adv_examples).reshape(10000, 3072)
+    # print(adv_examples.shape)
+    np.save('../data/adversarial_example_signs.npy', adv_examples)
+    # if top1.avg > best_top_1:
+    #     best_top_1 = top5.avg
+
+    print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} in validation'.format(top1=top1, top5=top5))
+    # logger.scalar_summary('Top 1', top1.avg, epoch)
+    # logger.scalar_summary('Top 5', top5.avg, epoch)

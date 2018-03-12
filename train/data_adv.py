@@ -3,18 +3,22 @@ import os
 from PIL import Image
 import numpy as np
 
+import torch
 from torch.utils.data import Dataset
+from torch.autograd import Variable
+from torch.nn import CrossEntropyLoss
 # from torchvision import transforms
 import transforms
 # import affine_transforms
-import torch
 import time
+from model_simple import SimpleConvNet
+
 
 
 class CIFAR(Dataset):
-    def __init__(self, data_path, split, augment=True, load_everything=True):
+    def __init__(self, data_path, split, augment=True, load_everything=True, filename='cifar-10.npz'):
         self.count = 0
-        file_path = os.path.join(data_path, 'cifar-10.npz')
+        file_path = os.path.join(data_path, filename)
         full_data = np.load(file_path)
 
         self.normalize = transforms.Normalize(
@@ -28,14 +32,18 @@ class CIFAR(Dataset):
             ]
 
         self.split = split
+        self.dataset = full_data['arr_0']
+        self.labels = full_data['arr_1']
         if split == 'train':
-            self.dataset = full_data['arr_0'][:50000]
+            if filename == 'cifar-10.npz':
+                self.dataset = self.dataset[:50000]
+                self.labels = self.labels[:50000]
             self.dataset = self.dataset.reshape((50000, 3, 32, 32))
-            self.labels = full_data['arr_1'][:50000]
         else:
-            self.dataset = full_data['arr_0'][50000:]
+            if filename == 'cifar-10.npz':
+                self.dataset = full_data[50000:]
+                self.labels = self.labels[50000:]
             self.dataset = self.dataset.reshape((10000, 3, 32, 32))
-            self.labels = full_data['arr_1'][50000:]
         self.dataset = np.transpose(self.dataset, (0, 2, 3, 1))
         print(self.dataset.shape)
 
@@ -61,29 +69,27 @@ class CIFAR(Dataset):
             self.normalize]
 
         self.preprocess = transforms.Compose(transform)
+        self.to_image = transforms.ToPILImage()
 
-        # self.split = split
-        # if split != 'test':
-        #     self.labels = np.array(self.dataset['labels'])
-        # self.load_everything = load_everything
-        # if self.load_everything:
-        #     self.images = np.array(self.dataset['images'])
+
 
     def __getitem__(self, index):
         self.count += 1
 
-        # if self.load_everything:
-        #     image = self.images[index]
-        # else:
-        image = self.dataset[index]
+        # img_tensor = torch.FloatTensor(self.dataset[index])
+        # img_tensor = Image.fromarray(self.dataset[index])
+        image = self.dataset[index].astype(np.uint8)
+        # print(image.shape).astype(uint8)
         img_tensor = self.preprocess(Image.fromarray(image))
-
+        # img_tensor = self.preprocess(self.to_image(img_tensor))
+        # print(img_tensor.squeeze(0).shape)
+        # print(adv_output.size())
         # if self.split == 'test':
         #     return img_tensor, index
         # img_tensor = self.dataset[index]
-        
         label = self.labels[index]
         label_tensor = torch.LongTensor(np.array([label]).astype(int))
+        # print(adv_input.grad.data)
 
         return img_tensor, label_tensor
 
